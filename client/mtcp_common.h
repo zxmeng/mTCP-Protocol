@@ -7,29 +7,33 @@
 #define SERVER_PORT	12345
 #define SEGMENT_SIZE 1000
 
-struct m_tcp_header {
-    uint32_t type_seq;
-    char data[SEGMENT_SIZE];
+#define SYN     0x00
+#define SYN_ACK 0x01
+#define FIN     0x02
+#define FIN_ACK 0x03
+#define ACK     0x04
+#define DATA    0x05
+
+struct mtcp_header {
+    unsigned char header_[4];
+    unsigned char data[SEGMENT_SIZE];
 };
 
-uint32_t get_type(struct m_tcp_header* header) {
-    return header->type_seq >> 28;
+void encode_mtcp_header(struct mtcp_header* header, unsigned char mode, unsigned int seq_ack) {
+    seq_ack = htonl(seq_ack);
+    memcpy(header->header_, &seq_ack, 4);
+    header->header_[0] = header->header_[0] | (mode << 4);
 }
 
-uint32_t get_seq_ack(struct m_tcp_header* header) {
-    return header->type_seq << 4 >> 4;
+void decode_mtcp_header(struct mtcp_header* header, unsigned char* mode, unsigned int* seq_ack) {
+    *mode = header->header_[0] >> 4;
+    // mask out the first 4 bit
+    header->header_[0] = header->header_[0] & 0x0F;
+    memcpy(seq_ack, header->header_, 4);
+    *seq_ack = ntohl(*seq_ack);
 }
 
-void put_type(struct m_tcp_header* header, uint32_t type) {
-    header->type_seq = (header->type_seq << 4 >> 4) + (type << 28);
-}
-
-void put_seq_ack(struct m_tcp_header* header, uint32_t seq_ack) {
-    header->type_seq = (header->type_seq >> 28 << 28) + (seq_ack << 4 >> 4);
-}
-
-void put_data(struct m_tcp_header* header, char* data_, uint32_t size) {
+void put_data(struct mtcp_header* header, char* data_, unsigned int size) {
     memset(header->data, 0, SEGMENT_SIZE);
     memcpy(header->data, data_, size);
 }
-
