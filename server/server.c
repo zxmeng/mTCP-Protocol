@@ -9,8 +9,8 @@
 #include <string.h>	// for strerror()
 #include <arpa/inet.h>	// for inet_pton()
 
-#include <mtcp_server.h>
-#include <mtcp_common.h>
+#include "mtcp_server.h"
+#include "mtcp_common.h"
 
 unsigned char global_send_buf[MAX_BUF_SIZE];
 unsigned char global_recv_buf[MAX_BUF_SIZE];
