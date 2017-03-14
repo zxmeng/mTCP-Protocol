@@ -6,6 +6,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include "mtcp_common.h"
 #include "mtcp_server.h"
 
 #define ANSI_COLOR_RED     "\x1b[31m"
@@ -27,6 +28,9 @@
 #define ACK             0x04
 #define DATA            0x05
 #define INITIAL_MODE    0x06
+
+unsigned char global_send_buf[MAX_BUF_SIZE];
+unsigned char global_recv_buf[MAX_BUF_SIZE];
 
 typedef enum{
     INITIAL_STATE,
@@ -154,11 +158,10 @@ static pthread_cond_t send_thread_sig = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t send_thread_sig_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // for global_recv_buf[]
-static pthread_cond_t recvbuf_thread_sig = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t recvbuf_thread_sig_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_mutex_t info_mutex = PTHREAD_MUTEX_INITIALIZER;
-static bool closed = false;
+static int client_closed = 0;
 // to record the seq no in recv packet from client
 static int cur_seq = -1;
 static int recv_len = 0;
@@ -186,11 +189,10 @@ static void *send_thread(void *args){
     char read_last_packet_recv;
 
     // store ack to be sent to client side
-    struct mtcp_packet send_packet;    
-    int recv_size; 
+    struct mtcp_packet send_packet;
 
-    bool connection_in_use = true;
-    while(connection_in_use) {
+    bool waiting_data = true;
+    while(waiting_data) {
         // waiting for receiving thread to wake sending thread up
         pthread_mutex_lock(&send_thread_sig_mutex);
         pthread_cond_wait(&send_thread_sig, &send_thread_sig_mutex);
@@ -237,9 +239,9 @@ static void *send_thread(void *args){
                 pthread_mutex_unlock(&info_mutex);
 
                 // wake up application thread 
-                pthread_mutex_lock(&recvbuf_thread_sig_mutex);
-                pthread_cond_signal(&recvbuf_thread_sig);
-                pthread_mutex_unlock(&recvbuf_thread_sig_mutex);
+                pthread_mutex_lock(&app_thread_sig_mutex);
+                pthread_cond_signal(&app_thread_sig);
+                pthread_mutex_unlock(&app_thread_sig_mutex);
 
             break;
 
@@ -248,13 +250,29 @@ static void *send_thread(void *args){
                     perror("Sending Thread: expects last packet received in FOUR_WAY_HANDSHAKE_STATE to be FIN\n");
                 } else {
                     mode_to_send = FIN_ACK;
-                    encode_mtcp_header(&packet, mode_to_send, ack_to_send);
-                    if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr*)&client_addr, addrlen)) != 4) {
+                    // get ack no
+                    pthread_mutex_lock(&info_mutex);
+                    ack_to_send = cur_ack + recv_len;
+                    pthread_mutex_unlock(&info_mutex);
+
+                    encode_mtcp_header(&send_packet, mode_to_send, ack_to_send);
+                    if ((len = sendto(socket_fd, &send_packet, 4, 0, (struct sockaddr*)&client_addr, addrlen)) != 4) {
                         perror("Sending Thread: Sending Thread fails to send FIN_ACK to client");
                     }
-                    ack_to_send += 1;
-                    connection_in_use = false;
+
                     printf_helper_send_with_seq(read_state, "Sent packet to client", ack_to_send, "FIN_ACK");
+
+                    // send successfully, update ack no
+                    pthread_mutex_lock(&info_mutex);
+                    cur_ack = ack_to_send;
+                    pthread_mutex_unlock(&info_mutex);
+
+                    waiting_data = false;
+                    // wake up application thread 
+                    pthread_mutex_lock(&app_thread_sig_mutex);
+                    pthread_cond_signal(&app_thread_sig);
+                    pthread_mutex_unlock(&app_thread_sig_mutex);
+
                 }
             break;
         }
@@ -271,8 +289,8 @@ static void *receive_thread(void *args){
     // store recv data from client side, write by recvfrom() in recv thread
     struct mtcp_packet recv_packet;
 
-    bool monitoring = true;
-    while (monitoring) {
+    bool waiting_data = true;
+    while (waiting_data) {
         printf_helper_recv_no_seq(cur_state, "listening to message from client");
         if ((len = recvfrom(socket_fd, (char*)&recv_packet, MAX_BUF_SIZE, 0, (struct sockaddr*)&client_addr, &addrlen)) < 4) {
             perror("Server receives incorrect data from server\n");
@@ -311,20 +329,19 @@ static void *receive_thread(void *args){
 
                     case FOUR_WAY_HANDSHAKE_STATE:
                         // ACK IN FOUR WAY HANDSHAKE
-                        printf_helper_recv_with_seq(THREE_WAY_HANDSHAKE_STATE, "wake up application thread if sleeping", seq_recv, "ACK");
+                        printf_helper_recv_with_seq(FOUR_WAY_HANDSHAKE_STATE, "wake up application thread if sleeping", seq_recv, "ACK");
+                        // client closed, server to be closed
                         pthread_mutex_lock(&info_mutex);
-                        bool wake_app_thread = false;
-                        if (closed == false)
-                            wake_app_thread = true;
+                        client_closed = 1;
                         last_packet_recv = mode_recv;
                         cur_seq = seq_recv;
                         pthread_mutex_unlock(&info_mutex);
-                        if (wake_app_thread) {
-                            pthread_mutex_lock(&app_thread_sig_mutex);
-                            pthread_cond_signal(&app_thread_sig);
-                            pthread_mutex_unlock(&app_thread_sig_mutex);
-                        }
-                        monitoring = false;
+                        // wake up application thread
+                        pthread_mutex_lock(&app_thread_sig_mutex);
+                        pthread_cond_signal(&app_thread_sig);
+                        pthread_mutex_unlock(&app_thread_sig_mutex);
+
+                        waiting_data = false;
                     break;
                 }
             break;
@@ -332,7 +349,7 @@ static void *receive_thread(void *args){
             case DATA:
                 pthread_mutex_lock(&info_mutex);
                 // discard out-of-order data
-                if(seq_recv!= cur_ack){
+                if(seq_recv != cur_ack){
                     break;
                 }
                 // get seq no and size of data for sending thread usage
@@ -344,7 +361,7 @@ static void *receive_thread(void *args){
 
                 // save data into global recv buffer for mtcp_read() usage 
                 pthread_mutex_lock(&recvbuf_thread_sig_mutex);
-                memcpy(&global_recv_buf, get_data(recv_packet), MAX_BUF_SIZE);
+                memcpy(&global_recv_buf, get_data(&recv_packet), MAX_BUF_SIZE);
                 pthread_mutex_unlock(&recvbuf_thread_sig_mutex);
 
                 pthread_mutex_lock(&send_thread_sig_mutex);
@@ -354,12 +371,23 @@ static void *receive_thread(void *args){
 
             case FIN:
                 // FIN, Go to FOUR WAY HANDSHAKE
-                printf_helper_recv_with_seq(cur_state, "wake up sending thread", seq_recv, "FIN");
                 pthread_mutex_lock(&info_mutex);
+                // discard out-of-order data
+                if(seq_recv != cur_ack){
+                    break;
+                }
+                // get seq no and size of data for sending thread usage
                 last_packet_recv = mode_recv;
-                cur_state = FOUR_WAY_HANDSHAKE_STATE;
                 cur_seq = seq_recv;
+                recv_len = len - 4;
+                cur_state = FOUR_WAY_HANDSHAKE_STATE;
                 pthread_mutex_unlock(&info_mutex);
+                printf_helper_recv_with_seq(cur_state, "wake up sending thread", seq_recv, "FIN");
+                
+                pthread_mutex_lock(&recvbuf_thread_sig_mutex);
+                memcpy(&global_recv_buf, get_data(&recv_packet), MAX_BUF_SIZE);
+                pthread_mutex_unlock(&recvbuf_thread_sig_mutex);
+                
                 pthread_mutex_lock(&send_thread_sig_mutex);
                 pthread_cond_signal(&send_thread_sig);
                 pthread_mutex_unlock(&send_thread_sig_mutex);
@@ -388,9 +416,86 @@ void mtcp_accept(int socket_fd, struct sockaddr_in *server_addr){
 }
 
 int mtcp_read(int socket_fd, unsigned char *buf, int buf_len){
-    ;
+    int len;
+    int closed_flag;
+
+    pthread_mutex_lock(&info_mutex);
+    // get the size of data in global_recv_buf
+    len = recv_len;
+    recv_len = 0;
+    // check the conn status
+    closed_flag = client_closed;
+    pthread_mutex_unlock(&info_mutex);
+
+    if (closed_flag == 2) {
+        return -1;
+    }
+    if (len == 0 && closed_flag == 1){
+        return 0;
+    }
+    // check whether buf is empty
+    if (len != 0){
+        // copy data to global_recv_buf
+        pthread_mutex_lock(&recvbuf_thread_sig_mutex);
+        memcpy(buf, global_send_buf, len);
+        memset(global_send_buf, 0, MAX_BUF_SIZE);
+        pthread_mutex_unlock(&recvbuf_thread_sig_mutex);
+        return len;
+    }
+
+    // if empty, waiting for data coming
+    // waiting for sending thread to wake application thread up
+    pthread_mutex_lock(&app_thread_sig_mutex);
+    pthread_cond_wait(&app_thread_sig, &app_thread_sig_mutex);
+    pthread_mutex_unlock(&app_thread_sig_mutex);
+    
+    // error handling
+    pthread_mutex_lock(&info_mutex);
+    // check the conn status
+    closed_flag = client_closed;
+    // get the size of data in global_recv_buf
+    len = recv_len;
+    recv_len = 0;
+    pthread_mutex_unlock(&info_mutex);
+
+    if (closed_flag == 2) {
+        return -1;
+    }
+    if (len == 0 && closed_flag == 1){
+        return 0;
+    }
+    // recvfrom return -1
+    if (len < 0){
+        return -1;
+    }
+
+    // copy data to global_recv_buf
+    pthread_mutex_lock(&recvbuf_thread_sig_mutex);
+    memcpy(buf, global_send_buf, len);
+    memset(global_send_buf, 0, MAX_BUF_SIZE);
+    pthread_mutex_unlock(&recvbuf_thread_sig_mutex);
+    return len;
 }
 
 void mtcp_close(int socket_fd){
-    ;
+    // check connection_in_use
+    // if false -> return close
+    // if not -> conditional wait conn_in_use to be false
+    int closed_flag;
+    pthread_mutex_lock(&info_mutex);
+    closed_flag = client_closed;
+    pthread_mutex_unlock(&info_mutex);
+    // conn closed 
+    if (closed_flag == 0){
+        // waiting for sending thread to wake application thread up
+        pthread_mutex_lock(&app_thread_sig_mutex);
+        pthread_cond_wait(&app_thread_sig, &app_thread_sig_mutex);
+        pthread_mutex_unlock(&app_thread_sig_mutex);
+    }
+    
+    pthread_mutex_lock(&info_mutex);
+    client_closed = 2;
+    pthread_mutex_unlock(&info_mutex);
+ 
+    close(socket_fd);
 }
