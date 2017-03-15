@@ -307,11 +307,11 @@ static void *receive_thread(void *args){
         switch(mode_recv) {
             case SYN:
                 // SYN, Go to THREE WAY HANDSHAKE
-                printf_helper_recv_with_seq(cur_state, "wake up sending thread", seq_recv, "SYN");
                 pthread_mutex_lock(&info_mutex);
                 last_packet_recv = mode_recv;
                 cur_state = THREE_WAY_HANDSHAKE_STATE;
                 cur_seq = seq_recv;
+                printf_helper_recv_with_seq(cur_state, "received packet", cur_seq, "SYN");
                 pthread_mutex_unlock(&info_mutex);
                 pthread_mutex_lock(&send_thread_sig_mutex);
                 pthread_cond_signal(&send_thread_sig);
@@ -328,6 +328,7 @@ static void *receive_thread(void *args){
                         last_packet_recv = mode_recv;
                         cur_seq = seq_recv;
                         cur_state = DATA_TRANSMISSION_STATE;
+                        printf_helper_recv_with_seq(cur_state, "received packet", cur_seq, "ACK");
                         pthread_mutex_unlock(&info_mutex);
                         pthread_mutex_lock(&app_thread_sig_mutex);
                         pthread_cond_signal(&app_thread_sig);
@@ -342,6 +343,7 @@ static void *receive_thread(void *args){
                         conn_status = 1;
                         last_packet_recv = mode_recv;
                         cur_seq = seq_recv;
+                        printf_helper_recv_with_seq(cur_state, "received packet", cur_seq, "ACK");
                         pthread_mutex_unlock(&info_mutex);
                         // wake up application thread
                         pthread_mutex_lock(&app_thread_sig_mutex);
@@ -357,6 +359,7 @@ static void *receive_thread(void *args){
                 pthread_mutex_lock(&info_mutex);
                 // discard out-of-order data
                 if(seq_recv != cur_ack){
+                    pthread_mutex_unlock(&info_mutex);
                     break;
                 }
                 // get seq no and size of data for sending thread usage
@@ -364,6 +367,7 @@ static void *receive_thread(void *args){
                 cur_seq = seq_recv;
                 recv_len = len - 4;
                 cur_state = DATA_TRANSMISSION_STATE;
+                printf_helper_recv_with_seq(cur_state, "received packet", cur_seq, "DATA");
                 pthread_mutex_unlock(&info_mutex);
 
                 // save data into global recv buffer for mtcp_read() usage 
@@ -390,7 +394,7 @@ static void *receive_thread(void *args){
                 recv_len = len - 4;
                 cur_state = FOUR_WAY_HANDSHAKE_STATE;
                 pthread_mutex_unlock(&info_mutex);
-                printf_helper_recv_with_seq(cur_state, "wake up sending thread", seq_recv, "FIN");
+                printf_helper_recv_with_seq(cur_state, "recv packet", seq_recv, "FIN");
                 
                 pthread_mutex_lock(&recvbuf_thread_sig_mutex);
                 memcpy(&global_recv_buf, get_data(&recv_packet), MAX_BUF_SIZE);
@@ -424,6 +428,7 @@ void mtcp_accept(int socket_fd, struct sockaddr_in *server_addr){
 }
 
 int mtcp_read(int socket_fd, unsigned char *buf, int buf_len){
+    printf("enter mtcp_read\n");
     int len;
     int closed_flag;
 
@@ -450,11 +455,12 @@ int mtcp_read(int socket_fd, unsigned char *buf, int buf_len){
         pthread_mutex_unlock(&recvbuf_thread_sig_mutex);
         return len;
     }
-
+    printf("about to sleep\n");
     // if buf empty, waiting for data coming and sending thread to wake application thread up
     pthread_mutex_lock(&app_thread_sig_mutex);
     pthread_cond_wait(&app_thread_sig, &app_thread_sig_mutex);
     pthread_mutex_unlock(&app_thread_sig_mutex);
+    printf("wake up\n");
     
     // error handling
     pthread_mutex_lock(&info_mutex);
