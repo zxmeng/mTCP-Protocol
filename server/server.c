@@ -65,7 +65,6 @@ int main(int argc, char **argv){
 
 	while(1){
 		read_rtn = mtcp_read(sock_fd, (unsigned char*) buf, MAX_BUF_SIZE);
-
 		if(read_rtn <= 0)
 			break;
 
@@ -74,7 +73,6 @@ int main(int argc, char **argv){
 	
 	// Close the mTCP connection
 	mtcp_close(sock_fd);
-
 	// Close the UDP socket
 	close(file_fd);
 	return 0;

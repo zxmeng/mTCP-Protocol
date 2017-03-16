@@ -82,7 +82,7 @@ static unsigned char last_type_recv = INITIAL_MODE; // modified by RECVING threa
 
 static STATE cur_state = INITIAL_STATE;    // modified by APP thread connect() and close()
 
-static char local_send_buf[FILE_MAX_SIZE]; // modified by APP thread write()
+static unsigned char local_send_buf[FILE_MAX_SIZE]; // modified by APP thread write()
 static unsigned int local_send_buf_len = 0;    // modified by APP thread wrtie(), watched by SENDING thread
 
 struct mtcp_packet {
@@ -108,7 +108,7 @@ void empty_mtcp_header(struct mtcp_packet* packet) {
     memset(packet, 0, sizeof(struct mtcp_packet));
 }
 
-void put_data(struct mtcp_packet* packet, char* data, unsigned int size) {
+void put_data(struct mtcp_packet* packet, unsigned char* data, unsigned int size) {
     memset(packet->data_, 0, SEGMENT_SIZE);
     memcpy(packet->data_, data, size);
 }
@@ -491,22 +491,11 @@ static void *receive_thread(void *args){
     struct mtcp_packet packet;                  
     unsigned char type_recv;              // option sent to server side
     unsigned int ack_recv;
-        
-        
-    // // check the status     
-    // STATE read_cur_state;                    // local version of global cur_state
-        
-    // unsigned int read_last_seq_num;          // local version of global last_seq_num
-    // unsigned int read_cur_seq_num;           // local version of global cur_seq_num
-    unsigned int read_next_seq_num;          // local version of global next_seq_num
-        
-    // unsigned char read_last_type_recv;       // local version of last_type_recv
-    // unsigned char read_last_type_sent;       // local version of last_type_sent
 
-    // unsigned int read_local_send_buf_len;    // local version of local_send_buf_len
+    unsigned int read_next_seq_num;          // local version of global next_seq_num
 
     while(1) {
-        if ((len = recvfrom(socket_fd, (char*)&packet, 4, 0, NULL, NULL)) < 4) {
+        if ((len = recvfrom(socket_fd, (unsigned char*)&packet, 4, 0, NULL, NULL)) < 4) {
             printf("Server receives incorrect data from server\n");
             exit(-1);
         }
@@ -593,9 +582,7 @@ void mtcp_connect(int socket_fd, struct sockaddr_in *server_addr){
 int mtcp_write(int socket_fd, unsigned char *buf, int buf_len){
     // write buf to global_send_buf
     // wake sending thread up and return buf_len automatically
- 
     STATE read_cur_state;                    // local version of global cur_state
-
     unsigned int read_local_send_buf_len;    // local version of local_send_buf_len
 
     pthread_mutex_lock(&info_mutex);
