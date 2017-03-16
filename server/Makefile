@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -I.
-LDFLAGS=-lpthread -lrt
+LDFLAGS=-lpthread
 
 EXE = server
 

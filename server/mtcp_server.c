@@ -252,7 +252,7 @@ static void *receive_thread(void *args){
 
     while (1) {
         printf_helper_recv_no_seq(cur_state, "listening to message from client");
-        if ((len = recvfrom(socket_fd, (char*)&recv_packet, MAX_BUF_SIZE, 0, (struct sockaddr*)&client_addr, &addrlen)) < 4) {
+        if ((len = recvfrom(socket_fd, (char*)&recv_packet, 1004, 0, (struct sockaddr*)&client_addr, &addrlen)) < 4) {
             perror("Server receives incorrect data from server\n");
             pthread_mutex_lock(&info_mutex);
             recv_from_len = len;
@@ -417,8 +417,10 @@ int mtcp_read(int socket_fd, unsigned char *buf, int buf_len){
         pthread_mutex_lock(&info_mutex);
         read_cur_state = cur_state;
         read_recv_from_len = recv_from_len;
+        printf("");
         read_local_buf_len = local_recv_buf_len;
         pthread_mutex_unlock(&info_mutex);
+        printf("MTCP READ: read_recv_from_len (%d)\n", read_recv_from_len);
         if (read_recv_from_len == -1) {
             return -1;
         } else if ((read_cur_state == FOUR_WAY_HANDSHAKE_STATE) && (read_local_buf_len == app_thread_read_len)) {
@@ -427,6 +429,7 @@ int mtcp_read(int socket_fd, unsigned char *buf, int buf_len){
             return -1;
         } else {
             unsigned int size_to_recv = min(buf_len, read_local_buf_len - app_thread_read_len);
+            printf("MTCP READ: size_to_recv(%d)\n", size_to_recv);
             if ( size_to_recv > 0) {
                 pthread_mutex_lock(&local_recv_buf_mutex);
                 memcpy(buf, &(local_recv_buf[local_recv_buf_len]), size_to_recv);
