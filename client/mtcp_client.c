@@ -466,7 +466,7 @@ static void *send_thread(void *args){
                         pthread_mutex_lock(&app_thread_sig_mutex);
                         pthread_cond_signal(&app_thread_sig);
                         pthread_mutex_unlock(&app_thread_sig_mutex);
-                        exit(0);
+                        pthread_exit(NULL);
                     break;
 
                     default:
@@ -516,7 +516,7 @@ static void *receive_thread(void *args){
             pthread_mutex_unlock(&send_thread_sig_mutex);
 
             if (type_recv == FIN_ACK) {
-                exit(0);
+                pthread_exit(NULL);
             }
         }
     }
@@ -542,11 +542,12 @@ void mtcp_connect(int socket_fd, struct sockaddr_in *server_addr){
 
         if (pthread_create(&send_thread_pid, NULL, &send_thread, &args)) {
             printf("Fail to create sending thread");
+            exit(-1);
         }
         if (pthread_create(&recv_thread_pid, NULL, &receive_thread, &args)) {
             printf("Fail to create receving thread");
+            exit(-1);
         }
-        // sleep(1);
 
         printf_helper_app("THREE_WAY_HANDSHAKE_STATE", "wake sending thread to initiate THREE_WAY_HANDSHAKE");
         pthread_mutex_lock(&send_thread_sig_mutex);

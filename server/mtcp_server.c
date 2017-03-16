@@ -191,8 +191,7 @@ static void *send_thread(void *args){
 
     // store ack to be sent to client side
     struct mtcp_packet send_packet;
-    bool flag = true;
-    while(flag) {
+    while(1) {
         // waiting for receiving thread to wake sending thread up
         pthread_mutex_lock(&send_thread_sig_mutex);
         pthread_cond_wait(&send_thread_sig, &send_thread_sig_mutex);
@@ -209,6 +208,7 @@ static void *send_thread(void *args){
                 encode_mtcp_header(&send_packet, type_to_send, read_cur_ack_num);
                 if ((len = sendto(socket_fd, &send_packet, 4, 0, (struct sockaddr*)&client_addr, addrlen)) != 4) {
                     perror("Sending Thread: Sending Thread fails to send SYN_ACK to client");
+                    exit(-1);
                 }
                 printf_helper_send_with_seq(read_cur_state, "Sent packet to client", read_cur_ack_num, "SYN_ACK");
             break;
@@ -218,6 +218,7 @@ static void *send_thread(void *args){
                 encode_mtcp_header(&send_packet, type_to_send, read_cur_ack_num);
                 if ((len = sendto(socket_fd, &send_packet, 4, 0, (struct sockaddr*)&client_addr, addrlen)) != 4) {
                     perror("Sending Thread: Sending Thread fails to send ACK to client");
+                    exit(-1);
                 }
                 printf_helper_send_with_seq(read_cur_state, "Sent packet to client", read_cur_ack_num, "ACK");
             break;
@@ -227,10 +228,10 @@ static void *send_thread(void *args){
                 encode_mtcp_header(&send_packet, type_to_send, read_cur_ack_num);
                 if ((len = sendto(socket_fd, &send_packet, 4, 0, (struct sockaddr*)&client_addr, addrlen)) != 4) {
                     perror("Sending Thread: Sending Thread fails to send FIN_ACK to client");
+                    exit(-1);
                 }
                 printf_helper_send_with_seq(read_cur_state, "Sent packet to client", read_cur_ack_num, "FIN_ACK");
-                flag = false;
-                // exit(0);
+                pthread_exit(NULL);
             break;
             default:
             break;
@@ -252,15 +253,14 @@ static void *receive_thread(void *args){
     unsigned int read_cur_ack_num;
     unsigned int read_local_buf_len;
 
-    bool flag = true;
-    while (flag) {
+    while (1) {
         printf_helper_recv_no_seq(cur_state, "listening to message from client");
         if ((len = recvfrom(socket_fd, (unsigned char*)&recv_packet, 1004, 0, (struct sockaddr*)&client_addr, &addrlen)) < 4) {
             perror("Server receives incorrect data from server\n");
             pthread_mutex_lock(&info_mutex);
             recv_from_len = len;
             pthread_mutex_unlock(&info_mutex);
-            flag = false;
+            pthread_exit(NULL);
         }
         len = len - 4;
         pthread_mutex_lock(&info_mutex);
@@ -306,7 +306,7 @@ static void *receive_thread(void *args){
                         pthread_mutex_lock(&app_thread_sig_mutex);
                         pthread_cond_signal(&app_thread_sig);
                         pthread_mutex_unlock(&app_thread_sig_mutex);
-                        flag = false;
+                        pthread_exit(NULL);
                     break;
                     default:
                     break;
@@ -378,12 +378,12 @@ void mtcp_accept(int socket_fd, struct sockaddr_in *server_addr){
     } 
     if (pthread_create(&send_thread_pid, NULL, &send_thread, &args)) {
         perror("Fail to create sending thread");
+        exit(-1);
     }
-    pthread_detach(send_thread_pid);
     if (pthread_create(&recv_thread_pid, NULL, &receive_thread, &args)) {
         perror("Fail to create receving thread");
+        exit(-1);
     }
-    pthread_detach(recv_thread_pid);
 
     struct timespec timeToWait;
     struct timeval now;
