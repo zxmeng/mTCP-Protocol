@@ -74,32 +74,32 @@ static STATE cur_state = INITIAL_STATE;
 static int client_buf_size;
 static bool conn_status = false;
 
-struct mtcp_header {
-    unsigned char header_[4];
+struct mtcp_packet {
+    unsigned char packet_[4];
     unsigned char data[SEGMENT_SIZE];
 };
 
-void encode_mtcp_header(struct mtcp_header* header, unsigned char mode, unsigned int seq_ack) {
+void encode_mtcp_header(struct mtcp_packet* _packet, unsigned char mode, unsigned int seq_ack) {
     seq_ack = htonl(seq_ack);
-    memcpy(header->header_, &seq_ack, 4);
-    header->header_[0] = header->header_[0] | (mode << 4);
+    memcpy(_packet->header_, &seq_ack, 4);
+    _packet->header_[0] = _packet->header_[0] | (mode << 4);
 }
 
-void decode_mtcp_header(struct mtcp_header* header, unsigned char* mode, unsigned int* seq_ack) {
-    *mode = header->header_[0] >> 4;
+void decode_mtcp_header(struct mtcp_packet* _packet, unsigned char* mode, unsigned int* seq_ack) {
+    *mode = _packet->header_[0] >> 4;
     // mask out the first 4 bit
-    header->header_[0] = header->header_[0] & 0x0F;
-    memcpy(seq_ack, header->header_, 4);
+    _packet->header_[0] = _packet->header_[0] & 0x0F;
+    memcpy(seq_ack, _packet->header_, 4);
     *seq_ack = ntohl(*seq_ack);
 }
 
-void empty_mtcp_header(struct mtcp_header* header) {
-    memset(header, 0, sizeof(struct mtcp_header));
+void empty_mtcp_header(struct mtcp_packet* _packet) {
+    memset(_packet, 0, sizeof(struct mtcp_packet));
 }
 
-void put_data(struct mtcp_header* header, unsigned char* data_, unsigned int size) {
-    memset(header->data, 0, SEGMENT_SIZE);
-    memcpy(header->data, data_, size);
+void put_data(struct mtcp_packet* _packet, unsigned char* data_, unsigned int size) {
+    memset(_packet->data, 0, SEGMENT_SIZE);
+    memcpy(_packet->data, data_, size);
 }
 
 void printf_helper_app(const char* state, const char* message) {
@@ -188,7 +188,7 @@ static void *send_thread(void *args){
     unsigned int addrlen = sizeof(struct sockaddr_in);
 
     int len; // variable used to monitor the number of bytes sent
-    struct mtcp_header header;
+    struct mtcp_packet packet;
 
     unsigned char packet_to_send; // option sent to server side
     unsigned int read_last_seq; 
@@ -232,9 +232,9 @@ static void *send_thread(void *args){
                 switch (read_last_packet_recv) {
                     case INITIAL_MODE:
                         packet_to_send = SYN;
-                        empty_mtcp_header(&header);
-                        encode_mtcp_header(&header, packet_to_send, read_cur_seq);
-                        if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                        empty_mtcp_header(&packet);
+                        encode_mtcp_header(&packet, packet_to_send, read_cur_seq);
+                        if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                             perror("Sending thread: Client fails to send SYN to server");
                             exit(-1);
                         }
@@ -245,9 +245,9 @@ static void *send_thread(void *args){
                     break;
                     case SYN_ACK:
                         packet_to_send = ACK;
-                        empty_mtcp_header(&header);
-                        encode_mtcp_header(&header, packet_to_send, read_cur_seq);
-                        if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                        empty_mtcp_header(&packet);
+                        encode_mtcp_header(&packet, packet_to_send, read_cur_seq);
+                        if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                             perror("Sending thread: Client fails to send ACK to server");
                         }
                         pthread_mutex_lock(&info_mutex);
@@ -276,7 +276,7 @@ static void *send_thread(void *args){
                 pthread_mutex_unlock(&info_mutex);
                 // timeout! retransmit
                 if (read_last_seq == read_cur_seq) {
-                    if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                    if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                         perror("Sending thread: Client fails to send ACK to server");
                     }
                 } 
@@ -289,14 +289,14 @@ static void *send_thread(void *args){
                     len = client_buf_size;
                     pthread_mutex_unlock(&info_mutex);   
                     if (len != 0) {
-                        empty_mtcp_header(&header);
+                        empty_mtcp_header(&packet);
                         pthread_mutex_lock(&global_send_buf_mutex);
-                        put_data(&header, global_send_buf, len);
+                        put_data(&packet, global_send_buf, len);
                         memset(&global_send_buf, 0, MAX_BUF_SIZE);
                         pthread_mutex_unlock(&global_send_buf_mutex); 
                         packet_to_send = DATA;
-                        encode_mtcp_header(&header, packet_to_send, read_cur_seq);
-                        if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                        encode_mtcp_header(&packet, packet_to_send, read_cur_seq);
+                        if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                             perror("Sending thread: Client fails to send DATA to server");
                         }
                         pthread_mutex_lock(&info_mutex);
@@ -319,13 +319,13 @@ static void *send_thread(void *args){
                         len = client_buf_size;
                         pthread_mutex_unlock(&info_mutex);   
                         if (len != 0) {
-                            empty_mtcp_header(&header);
+                            empty_mtcp_header(&packet);
                             pthread_mutex_lock(&global_send_buf_mutex);
-                            put_data(&header, global_send_buf, len);
+                            put_data(&packet, global_send_buf, len);
                             memset(&global_send_buf, 0, MAX_BUF_SIZE);
                             pthread_mutex_unlock(&global_send_buf_mutex); 
-                            encode_mtcp_header(&header, packet_to_send, read_cur_seq);
-                            if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                            encode_mtcp_header(&packet, packet_to_send, read_cur_seq);
+                            if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                                 perror("Sending thread: Client fails to send DATA to server");
                             }
                             pthread_mutex_lock(&info_mutex);
@@ -335,9 +335,9 @@ static void *send_thread(void *args){
                             pthread_mutex_unlock(&info_mutex); 
                             printf_helper_send_with_seq(read_state, "sent packet to client", read_cur_seq, "FIN");
                         } else {
-                            empty_mtcp_header(&header);
-                            encode_mtcp_header(&header, packet_to_send, read_cur_seq);
-                            if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                            empty_mtcp_header(&packet);
+                            encode_mtcp_header(&packet, packet_to_send, read_cur_seq);
+                            if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                                 perror("Sending thread: Client fails to send SYN to server");
                                 exit(-1);
                             }
@@ -347,9 +347,9 @@ static void *send_thread(void *args){
 
                     case FIN_ACK:
                         packet_to_send = ACK;
-                        empty_mtcp_header(&header);
-                        encode_mtcp_header(&header, packet_to_send, read_cur_seq);
-                        if ((len = sendto(socket_fd, &header, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
+                        empty_mtcp_header(&packet);
+                        encode_mtcp_header(&packet, packet_to_send, read_cur_seq);
+                        if ((len = sendto(socket_fd, &packet, 4, 0, (struct sockaddr *)server_addr, addrlen)) != 4) {
                             perror("Sending thread: Client fails to send ACK to server");
                         }
                         pthread_mutex_lock(&info_mutex);
@@ -387,15 +387,15 @@ static void *receive_thread(void *args){
     STATE read_state; // local version of cur_state
 
     int socket_fd = ((struct thread_info*)args)->socket_fd;
-    struct mtcp_header header;
+    struct mtcp_packet packet;
 
     bool monitoring = true;
     while(monitoring) {
-        if ((len = recvfrom(socket_fd, (char*)&header, 4, 0, NULL, NULL)) < 4) {
+        if ((len = recvfrom(socket_fd, (char*)&packet, 4, 0, NULL, NULL)) < 4) {
             perror("Server receives incorrect data from server\n");
             exit(-1);
         }
-        decode_mtcp_header(&header, &packet_recv, &ack_recv);
+        decode_mtcp_header(&packet, &packet_recv, &ack_recv);
         switch(packet_recv) {
             // Only THREE WAY HANDSHAKE has SYN_ACK
             case SYN_ACK:
