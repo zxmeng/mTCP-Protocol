@@ -341,22 +341,30 @@ static void *receive_thread(void *args){
 
             case FIN:
                 // FIN, Go to FOUR WAY HANDSHAKE
-                pthread_mutex_lock(&info_mutex);
-                cur_ack_num += (len + 1);
-                cur_state = FOUR_WAY_HANDSHAKE_STATE;
-                pthread_mutex_unlock(&info_mutex);
-                printf_helper_recv_with_seq(cur_state, "recv packet", seq_recv, "FIN");
-                if( len > 0) {
-                    pthread_mutex_lock(&local_recv_buf_mutex);
-                    memcpy(&(local_recv_buf[read_local_buf_len]),get_data(&recv_packet),len);
-                    pthread_mutex_unlock(&local_recv_buf_mutex);
-                    pthread_mutex_lock(&info_mutex);
-                    local_recv_buf_len += len;
-                    pthread_mutex_unlock(&info_mutex);
-                }
-                pthread_mutex_lock(&send_thread_sig_mutex);
-                pthread_cond_signal(&send_thread_sig);
-                pthread_mutex_unlock(&send_thread_sig_mutex);
+	    	// save this packet and wake up sending thread to send ack
+		if (seq_recv == read_cur_ack_num) {
+			pthread_mutex_lock(&info_mutex);
+			cur_ack_num += (len + 1);
+			cur_state = FOUR_WAY_HANDSHAKE_STATE;
+			pthread_mutex_unlock(&info_mutex);
+			printf_helper_recv_with_seq(cur_state, "recv packet", seq_recv, "FIN");
+			if( len > 0) {
+			    pthread_mutex_lock(&local_recv_buf_mutex);
+			    memcpy(&(local_recv_buf[read_local_buf_len]),get_data(&recv_packet),len);
+			    pthread_mutex_unlock(&local_recv_buf_mutex);
+			    pthread_mutex_lock(&info_mutex);
+			    local_recv_buf_len += len;
+			    pthread_mutex_unlock(&info_mutex);
+			}
+			pthread_mutex_lock(&send_thread_sig_mutex);
+			pthread_cond_signal(&send_thread_sig);
+			pthread_mutex_unlock(&send_thread_sig_mutex);
+		} else {
+                    // don't save the packet but wake up sending thread and send ack again
+                    pthread_mutex_lock(&send_thread_sig_mutex);
+                    pthread_cond_signal(&send_thread_sig);
+                    pthread_mutex_unlock(&send_thread_sig_mutex); 
+		}
             break;
 
             default:

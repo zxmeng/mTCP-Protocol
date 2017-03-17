@@ -491,7 +491,8 @@ static void *receive_thread(void *args){
     struct mtcp_packet packet;                  
     unsigned char type_recv;              // option sent to server side
     unsigned int ack_recv;
-
+    
+    STATE read_cur_state;
     unsigned int read_next_seq_num;          // local version of global next_seq_num
 
     while(1) {
@@ -504,7 +505,10 @@ static void *receive_thread(void *args){
         read_next_seq_num = next_seq_num;
         pthread_mutex_unlock(&info_mutex);
         if (read_next_seq_num != ack_recv) {
-            printf("Server receives incorrect ACK number from server\n");
+            pthread_mutex_lock(&info_mutex);
+	    read_cur_state = cur_state;
+            pthread_mutex_unlock(&info_mutex);
+	    printf_helper_recv_with_seq(read_cur_state, "Client receives incorrect ACK number from server\n", ack_recv, "DUMMY_TYPE");
         } else {
             pthread_mutex_lock(&info_mutex);
             last_type_recv = type_recv;
