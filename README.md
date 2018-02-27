@@ -1,12 +1,14 @@
-CSCI4430 Project 1
+# CSCI4430 Data Communication and Computer Networks
+
+## Project 1: mTCP Protocol
 
 Group 4
 
-MENG,   Zhixiang
+    MENG,   Zhixiang
 
-KUANG,  Xiaowei
+    KUANG,  Xiaowei
 
-ZHANG,  Haoze
+    ZHANG,  Haoze
 
 
 client folder
