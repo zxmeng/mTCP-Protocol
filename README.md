@@ -1,15 +1,6 @@
-# CSCI4430 Data Communication and Computer Networks
+# Data Communication and Computer Networks
 
-## Project 1: mTCP Protocol
-
-Group 4
-
-    MENG,   Zhixiang
-
-    KUANG,  Xiaowei
-
-    ZHANG,  Haoze
-
+## mTCP Protocol
 
 client folder
 
